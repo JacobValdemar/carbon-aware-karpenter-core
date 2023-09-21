@@ -78,6 +78,9 @@ func waitRetryOptions(ctx context.Context) []retry.Option {
 func NewController(clk clock.Clock, kubeClient client.Client, provisioner *provisioning.Provisioner,
 	cp cloudprovider.CloudProvider, recorder events.Recorder, cluster *state.Cluster) *Controller {
 
+	// JANOTE: Here, return other controller if carbon-awareness feature gate is enabled.
+	// Create three new deprovisioners NewEmptyMachineConsolidation, NewMultiMachineConsolidation, and NewSingleMachineConsolidation that is carbon aware and use them
+
 	return &Controller{
 		clock:         clk,
 		kubeClient:    kubeClient,

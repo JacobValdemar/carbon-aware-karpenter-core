@@ -57,6 +57,7 @@ type CloudProvider interface {
 
 type InstanceTypes []*InstanceType
 
+// JANOTE: lav alternativ til denne funktion
 func (its InstanceTypes) OrderByPrice(reqs scheduling.Requirements) InstanceTypes {
 	// Order instance types so that we get the cheapest instance types of the available offerings
 	sort.Slice(its, func(i, j int) bool {

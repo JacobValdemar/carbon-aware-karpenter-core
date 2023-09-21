@@ -134,6 +134,8 @@ func (r Results) PodSchedulingErrors() string {
 	return msg.String()
 }
 
+// JANOTE: Jeg tror, at den her funktion tager pods der ikke kan scheduleres, og prøver at schedulere dem. Så sker der noget og så
+// prøver den at schedulere dem på nogle tænkte noder. Så returnerer den de tænkte noder og så er det det der vil blive prøvet at provisionere.
 func (s *Scheduler) Solve(ctx context.Context, pods []*v1.Pod) (*Results, error) {
 	defer metrics.Measure(schedulingSimulationDuration)()
 	// We loop trying to schedule unschedulable pods as long as we are making progress.  This solves a few
@@ -143,6 +145,7 @@ func (s *Scheduler) Solve(ctx context.Context, pods []*v1.Pod) (*Results, error)
 	// We need to schedule them alternating, A, B, A, B, .... and this solution also solves that as well.
 	errors := map[*v1.Pod]error{}
 	q := NewQueue(pods...)
+	logging.FromContext(ctx).Debugf("we are in SOLVE") // JANOTE
 	for {
 		// Try the next pod
 		pod, ok := q.Pop()

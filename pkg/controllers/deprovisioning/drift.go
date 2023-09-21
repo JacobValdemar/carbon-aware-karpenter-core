@@ -53,6 +53,7 @@ func NewDrift(kubeClient client.Client, cluster *state.Cluster, provisioner *pro
 
 // ShouldDeprovision is a predicate used to filter deprovisionable machines
 func (d *Drift) ShouldDeprovision(ctx context.Context, c *Candidate) bool {
+	// JANOTE: eksempel på hvordan man bruger feature gate
 	return settings.FromContext(ctx).DriftEnabled &&
 		c.NodeClaim.StatusConditions().GetCondition(v1beta1.NodeDrifted).IsTrue()
 }

@@ -146,7 +146,7 @@ func (c *consolidation) computeConsolidation(ctx context.Context, candidates ...
 
 	// get the current node price based on the offering
 	// fallback if we can't find the specific zonal pricing data
-	nodesPrice, err := getCandidatePrices(candidates)
+	nodesPrice, err := getCandidatePrices(candidates) // JANOTE: create your own function
 	if err != nil {
 		return Command{}, fmt.Errorf("getting offering price from candidate node, %w", err)
 	}
@@ -192,6 +192,7 @@ func (c *consolidation) computeConsolidation(ctx context.Context, candidates ...
 	}, nil
 }
 
+// JANOTE
 // getCandidatePrices returns the sum of the prices of the given candidate nodes
 func getCandidatePrices(candidates []*Candidate) (float64, error) {
 	var price float64
