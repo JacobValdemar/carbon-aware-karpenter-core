@@ -32,14 +32,15 @@ type NodeClaimSpec struct {
 	// +optional
 	StartupTaints []v1.Taint `json:"startupTaints,omitempty"`
 	// Requirements are layered with GetLabels and applied to every node.
-	// +optional
-	Requirements []v1.NodeSelectorRequirement `json:"requirements,omitempty" hash:"ignore"`
+	// +required
+	Requirements []v1.NodeSelectorRequirement `json:"requirements" hash:"ignore"`
 	// Resources models the resource requirements for the NodeClaim to launch
 	// +optional
 	Resources ResourceRequirements `json:"resources,omitempty" hash:"ignore"`
-	// KubeletConfiguration are options passed to the kubelet when provisioning nodes
-	// +optional
-	KubeletConfiguration *KubeletConfiguration `json:"kubeletConfiguration,omitempty"`
+	// Kubelet defines args to be used when configuring kubelet on provisioned nodes.
+	// They are a subset of the upstream types, recognizing not all options may be supported.
+	// Wherever possible, the types and names should reflect the upstream kubelet types.
+	Kubelet *KubeletConfiguration `json:"kubelet,omitempty"`
 	// NodeClass is a reference to an object that defines provider specific configuration
 	// +required
 	NodeClass *NodeClassReference `json:"nodeClass"`
@@ -66,9 +67,10 @@ type KubeletConfiguration struct {
 	// Note that not all providers may use all addresses.
 	//+optional
 	ClusterDNS []string `json:"clusterDNS,omitempty"`
+	// TODO @joinnis: Remove this field when v1alpha5 is unsupported in a future version of Karpenter
 	// ContainerRuntime is the container runtime to be used with your worker nodes.
 	// +optional
-	ContainerRuntime *string `json:"containerRuntime,omitempty"`
+	ContainerRuntime *string `json:"-"`
 	// MaxPods is an override for the maximum number of pods that can run on
 	// a worker node instance.
 	// +kubebuilder:validation:Minimum:=0
@@ -131,10 +133,6 @@ type NodeClassReference struct {
 	// API version of the referent
 	// +optional
 	APIVersion string `json:"apiVersion,omitempty"`
-	// IsNodeTemplate tells Karpenter whether the in-memory representation of this object
-	// is actually referring to a NodeTemplate object. This value is not actually part of the v1beta1 public-facing API
-	// TODO @joinnis: Remove this field when v1alpha5 is unsupported in a future version of Karpenter
-	IsNodeTemplate bool `json:"-"`
 }
 
 // +kubebuilder:object:generate=false

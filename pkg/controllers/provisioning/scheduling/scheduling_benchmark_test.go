@@ -115,16 +115,16 @@ func TestSchedulingProfile(t *testing.T) {
 
 func benchmarkScheduler(b *testing.B, instanceCount, podCount int) {
 	// disable logging
-	ctx := logging.WithLogger(context.Background(), zap.NewNop().Sugar())
+	ctx = logging.WithLogger(context.Background(), zap.NewNop().Sugar())
 	ctx = settings.ToContext(ctx, test.Settings())
-	provisioner = test.Provisioner(test.ProvisionerOptions{Limits: map[v1.ResourceName]resource.Quantity{}})
+	nodePool := test.NodePool()
 
 	instanceTypes := fake.InstanceTypes(instanceCount)
 	cloudProvider = fake.NewCloudProvider()
 	cloudProvider.InstanceTypes = instanceTypes
-	scheduler := scheduling.NewScheduler(ctx, nil, []*scheduling.NodeClaimTemplate{scheduling.NewNodeClaimTemplate(nodepool.New(provisioner))},
+	scheduler := scheduling.NewScheduler(ctx, nil, []*scheduling.NodeClaimTemplate{scheduling.NewNodeClaimTemplate(nodePool)},
 		nil, state.NewCluster(&clock.RealClock{}, nil, cloudProvider), nil, &scheduling.Topology{},
-		map[nodepool.Key][]*cloudprovider.InstanceType{nodepool.Key{Name: provisioner.Name, IsProvisioner: true}: instanceTypes}, nil,
+		map[nodepool.Key][]*cloudprovider.InstanceType{nodepool.Key{Name: nodePool.Name, IsProvisioner: false}: instanceTypes}, nil,
 		events.NewRecorder(&record.FakeRecorder{}),
 		scheduling.SchedulerOptions{})
 
@@ -136,10 +136,7 @@ func benchmarkScheduler(b *testing.B, instanceCount, podCount int) {
 	podsScheduledInRound1 := 0
 	nodesInRound1 := 0
 	for i := 0; i < b.N; i++ {
-		results, err := scheduler.Solve(ctx, pods)
-		if err != nil {
-			b.FailNow()
-		}
+		results := scheduler.Solve(ctx, pods)
 		if i == 0 {
 
 			minPods := math.MaxInt64

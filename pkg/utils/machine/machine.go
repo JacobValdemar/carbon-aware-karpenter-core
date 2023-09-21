@@ -234,7 +234,7 @@ func NewFromNodeClaim(nodeClaim *v1beta1.NodeClaim) *v1alpha5.Machine {
 			Resources: v1alpha5.ResourceRequirements{
 				Requests: nodeClaim.Spec.Resources.Requests,
 			},
-			Kubelet:            NewKubeletConfiguration(nodeClaim.Spec.KubeletConfiguration),
+			Kubelet:            NewKubeletConfiguration(nodeClaim.Spec.Kubelet),
 			MachineTemplateRef: NewMachineTemplateRef(nodeClaim.Spec.NodeClass),
 		},
 		Status: v1alpha5.MachineStatus{
@@ -251,17 +251,17 @@ func NewConditions(conds apis.Conditions) apis.Conditions {
 	out := conds.DeepCopy()
 	for i := range out {
 		switch out[i].Type {
-		case v1beta1.NodeLaunched:
+		case v1beta1.Launched:
 			out[i].Type = v1alpha5.MachineLaunched
-		case v1beta1.NodeRegistered:
+		case v1beta1.Registered:
 			out[i].Type = v1alpha5.MachineRegistered
-		case v1beta1.NodeInitialized:
+		case v1beta1.Initialized:
 			out[i].Type = v1alpha5.MachineInitialized
-		case v1beta1.NodeEmpty:
+		case v1beta1.Empty:
 			out[i].Type = v1alpha5.MachineEmpty
-		case v1beta1.NodeExpired:
+		case v1beta1.Expired:
 			out[i].Type = v1alpha5.MachineExpired
-		case v1beta1.NodeDrifted:
+		case v1beta1.Drifted:
 			out[i].Type = v1alpha5.MachineDrifted
 		}
 	}

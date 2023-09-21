@@ -1,14 +1,15 @@
-export KUBEBUILDER_ASSETS ?= ${HOME}/.kubebuilder/bin
-
 help: ## Display help
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
 presubmit: verify test licenses vulncheck ## Run all steps required for code to be checked in
 
+## TODO @joinnis: Reduce the gingko timeout back to 10m once the v1alpha5 testing is removed
 test: ## Run tests
 	go test ./... \
 		-race \
+		-timeout 20m \
 		--ginkgo.focus="${FOCUS}" \
+		--ginkgo.timeout=20m \
 		--ginkgo.v \
 		-cover -coverprofile=coverage.out -outputdir=. -coverpkg=./...
 
@@ -16,6 +17,7 @@ deflake: ## Run randomized, racing tests until the test fails to catch flakes
 	ginkgo \
 		--race \
 		--focus="${FOCUS}" \
+		--timeout=20m \
 		--randomize-all \
 		--until-it-fails \
 		-v \

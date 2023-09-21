@@ -55,7 +55,7 @@ func NewDrift(kubeClient client.Client, cluster *state.Cluster, provisioner *pro
 func (d *Drift) ShouldDeprovision(ctx context.Context, c *Candidate) bool {
 	// JANOTE: eksempel på hvordan man bruger feature gate
 	return settings.FromContext(ctx).DriftEnabled &&
-		c.NodeClaim.StatusConditions().GetCondition(v1beta1.NodeDrifted).IsTrue()
+		c.NodeClaim.StatusConditions().GetCondition(v1beta1.Drifted).IsTrue()
 }
 
 // SortCandidates orders drifted nodes by when they've drifted
@@ -65,8 +65,8 @@ func (d *Drift) filterAndSortCandidates(ctx context.Context, nodes []*Candidate)
 		return nil, fmt.Errorf("filtering candidates, %w", err)
 	}
 	sort.Slice(candidates, func(i int, j int) bool {
-		return candidates[i].NodeClaim.StatusConditions().GetCondition(v1beta1.NodeDrifted).LastTransitionTime.Inner.Time.Before(
-			candidates[j].NodeClaim.StatusConditions().GetCondition(v1beta1.NodeDrifted).LastTransitionTime.Inner.Time)
+		return candidates[i].NodeClaim.StatusConditions().GetCondition(v1beta1.Drifted).LastTransitionTime.Inner.Time.Before(
+			candidates[j].NodeClaim.StatusConditions().GetCondition(v1beta1.Drifted).LastTransitionTime.Inner.Time)
 	})
 	return candidates, nil
 }
@@ -100,7 +100,7 @@ func (d *Drift) ComputeCommand(ctx context.Context, nodes ...*Candidate) (Comman
 		}
 		// Log when all pods can't schedule, as the command will get executed immediately.
 		if !results.AllNonPendingPodsScheduled() {
-			logging.FromContext(ctx).With("machine", candidate.NodeClaim.Name, "node", candidate.Node.Name).Debugf("cannot terminate drifted machine since scheduling simulation failed to schedule all pods %s", results.PodSchedulingErrors())
+			logging.FromContext(ctx).With("machine", candidate.NodeClaim.Name, "node", candidate.Node.Name).Debugf("cannot terminate drifted machine since scheduling simulation failed to schedule all pods %s", results.NonPendingPodSchedulingErrors())
 			d.recorder.Publish(deprovisioningevents.Blocked(candidate.Node, candidate.NodeClaim, "Scheduling simulation failed to schedule all pods")...)
 			continue
 		}

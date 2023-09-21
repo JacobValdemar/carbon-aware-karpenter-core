@@ -21,12 +21,18 @@ import (
 
 	"github.com/samber/lo"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/aws/karpenter-core/pkg/apis/v1alpha5"
 	"github.com/aws/karpenter-core/pkg/apis/v1beta1"
 	provisionerutil "github.com/aws/karpenter-core/pkg/utils/provisioner"
 )
+
+// EnableNodePools is an internal feature flag to allow functions that could List NodePools to work
+// This flag is currently here to enable testing
+// TODO @joinnis: Remove this internal flag when the v1beta1 APIs are released
+var EnableNodePools = false
 
 type Key struct {
 	Name          string
@@ -43,12 +49,12 @@ func New(provisioner *v1alpha5.Provisioner) *v1beta1.NodePool {
 					Labels:      provisioner.Spec.Labels,
 				},
 				Spec: v1beta1.NodeClaimSpec{
-					Taints:               provisioner.Spec.Taints,
-					StartupTaints:        provisioner.Spec.StartupTaints,
-					Requirements:         provisioner.Spec.Requirements,
-					KubeletConfiguration: NewKubeletConfiguration(provisioner.Spec.KubeletConfiguration),
-					NodeClass:            NewNodeClassReference(provisioner.Spec.ProviderRef),
-					Provider:             provisioner.Spec.Provider,
+					Taints:        provisioner.Spec.Taints,
+					StartupTaints: provisioner.Spec.StartupTaints,
+					Requirements:  provisioner.Spec.Requirements,
+					Kubelet:       NewKubeletConfiguration(provisioner.Spec.KubeletConfiguration),
+					NodeClass:     NewNodeClassReference(provisioner.Spec.ProviderRef),
+					Provider:      provisioner.Spec.Provider,
 				},
 			},
 			Weight: provisioner.Spec.Weight,
@@ -56,17 +62,13 @@ func New(provisioner *v1alpha5.Provisioner) *v1beta1.NodePool {
 		IsProvisioner: true,
 	}
 	if provisioner.Spec.TTLSecondsUntilExpired != nil {
-		np.Spec.Deprovisioning.ExpirationTTL = metav1.Duration{Duration: lo.Must(time.ParseDuration(fmt.Sprintf("%ds", lo.FromPtr[int64](provisioner.Spec.TTLSecondsUntilExpired))))}
-	} else {
-		np.Spec.Deprovisioning.ExpirationTTL = metav1.Duration{Duration: -1}
+		np.Spec.Disruption.ExpireAfter.Duration = lo.ToPtr(lo.Must(time.ParseDuration(fmt.Sprintf("%ds", lo.FromPtr[int64](provisioner.Spec.TTLSecondsUntilExpired)))))
 	}
 	if provisioner.Spec.Consolidation != nil && lo.FromPtr(provisioner.Spec.Consolidation.Enabled) {
-		np.Spec.Deprovisioning.ConsolidationPolicy = v1beta1.ConsolidationPolicyWhenUnderutilized
+		np.Spec.Disruption.ConsolidationPolicy = v1beta1.ConsolidationPolicyWhenUnderutilized
 	} else if provisioner.Spec.TTLSecondsAfterEmpty != nil {
-		np.Spec.Deprovisioning.ConsolidationPolicy = v1beta1.ConsolidationPolicyWhenEmpty
-		np.Spec.Deprovisioning.ConsolidationTTL = metav1.Duration{Duration: lo.Must(time.ParseDuration(fmt.Sprintf("%ds", lo.FromPtr[int64](provisioner.Spec.TTLSecondsAfterEmpty))))}
-	} else {
-		np.Spec.Deprovisioning.ConsolidationPolicy = v1beta1.ConsolidationPolicyNever
+		np.Spec.Disruption.ConsolidationPolicy = v1beta1.ConsolidationPolicyWhenEmpty
+		np.Spec.Disruption.ConsolidateAfter = &v1beta1.NillableDuration{Duration: lo.ToPtr(lo.Must(time.ParseDuration(fmt.Sprintf("%ds", lo.FromPtr[int64](provisioner.Spec.TTLSecondsAfterEmpty)))))}
 	}
 	if provisioner.Spec.Limits != nil {
 		np.Spec.Limits = v1beta1.Limits(provisioner.Spec.Limits.Resources)
@@ -106,6 +108,21 @@ func NewNodeClassReference(pr *v1alpha5.MachineTemplateRef) *v1beta1.NodeClassRe
 	}
 }
 
+func Get(ctx context.Context, c client.Client, key Key) (*v1beta1.NodePool, error) {
+	if key.IsProvisioner {
+		provisioner := &v1alpha5.Provisioner{}
+		if err := c.Get(ctx, types.NamespacedName{Name: key.Name}, provisioner); err != nil {
+			return nil, err
+		}
+		return New(provisioner), nil
+	}
+	nodePool := &v1beta1.NodePool{}
+	if err := c.Get(ctx, types.NamespacedName{Name: key.Name}, nodePool); err != nil {
+		return nil, err
+	}
+	return nodePool, nil
+}
+
 func List(ctx context.Context, c client.Client, opts ...client.ListOption) (*v1beta1.NodePoolList, error) {
 	provisionerList := &v1alpha5.ProvisionerList{}
 	if err := c.List(ctx, provisionerList, opts...); err != nil {
@@ -114,8 +131,12 @@ func List(ctx context.Context, c client.Client, opts ...client.ListOption) (*v1b
 	convertedNodePools := lo.Map(provisionerList.Items, func(p v1alpha5.Provisioner, _ int) v1beta1.NodePool {
 		return *New(&p)
 	})
-	// TODO @joinnis: Add NodePools to this List() function when releasing v1beta1 APIs
 	nodePoolList := &v1beta1.NodePoolList{}
+	if EnableNodePools {
+		if err := c.List(ctx, nodePoolList, opts...); err != nil {
+			return nil, err
+		}
+	}
 	nodePoolList.Items = append(nodePoolList.Items, convertedNodePools...)
 	return nodePoolList, nil
 }

@@ -69,7 +69,7 @@ func (in *NodeClaimSpec) validate() (errs *apis.FieldError) {
 	return errs.Also(
 		in.validateTaints(),
 		in.validateRequirements(),
-		in.KubeletConfiguration.validate().ViaField("kubeletConfiguration"),
+		in.Kubelet.validate().ViaField("kubeletConfiguration"),
 	)
 }
 

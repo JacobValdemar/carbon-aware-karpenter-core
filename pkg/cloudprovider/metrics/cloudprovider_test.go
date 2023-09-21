@@ -25,17 +25,21 @@ import (
 )
 
 var _ = Describe("Cloudprovider", func() {
-	var machineNotFoundErr = cloudprovider.NewMachineNotFoundError(errors.New("not found"))
+	var nodeClaimNotFoundErr = cloudprovider.NewNodeClaimNotFoundError(errors.New("not found"))
 	var insufficientCapacityErr = cloudprovider.NewInsufficientCapacityError(errors.New("not enough capacity"))
+	var nodeClassNotReadyErr = cloudprovider.NewNodeClassNotReadyError(errors.New("not ready"))
 	var unknownErr = errors.New("this is an error we don't know about")
 
 	Describe("CloudProvider machine errors via GetErrorTypeLabelValue()", func() {
 		Context("when the error is known", func() {
-			It("machine not found should be recognized", func() {
-				Expect(metrics.GetErrorTypeLabelValue(machineNotFoundErr)).To(Equal(metrics.MachineNotFoundError))
+			It("nodeclaim not found should be recognized", func() {
+				Expect(metrics.GetErrorTypeLabelValue(nodeClaimNotFoundErr)).To(Equal(metrics.NodeClaimNotFoundError))
 			})
 			It("insufficient capacity should be recognized", func() {
 				Expect(metrics.GetErrorTypeLabelValue(insufficientCapacityErr)).To(Equal(metrics.InsufficientCapacityError))
+			})
+			It("nodeclass not ready should be recognized", func() {
+				Expect(metrics.GetErrorTypeLabelValue(nodeClassNotReadyErr)).To(Equal(metrics.NodeClassNotReadyError))
 			})
 		})
 		Context("when the error is unknown", func() {

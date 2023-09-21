@@ -21,15 +21,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samber/lo"
 	"k8s.io/client-go/tools/record"
 	clock "k8s.io/utils/clock/testing"
-	"sigs.k8s.io/controller-runtime/pkg/cache"
-
-	"github.com/samber/lo"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/aws/karpenter-core/pkg/apis"
 	"github.com/aws/karpenter-core/pkg/apis/v1alpha5"
+	"github.com/aws/karpenter-core/pkg/apis/v1beta1"
 	"github.com/aws/karpenter-core/pkg/cloudprovider/fake"
 	"github.com/aws/karpenter-core/pkg/controllers/termination"
 	"github.com/aws/karpenter-core/pkg/controllers/termination/terminator"
@@ -38,6 +37,7 @@ import (
 	"github.com/aws/karpenter-core/pkg/operator/controller"
 	"github.com/aws/karpenter-core/pkg/operator/scheme"
 	"github.com/aws/karpenter-core/pkg/test"
+	nodeclaimutil "github.com/aws/karpenter-core/pkg/utils/nodeclaim"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -65,11 +65,7 @@ func TestAPIs(t *testing.T) {
 
 var _ = BeforeSuite(func() {
 	fakeClock = clock.NewFakeClock(time.Now())
-	env = test.NewEnvironment(scheme.Scheme, test.WithCRDs(apis.CRDs...), test.WithFieldIndexers(func(c cache.Cache) error {
-		return c.IndexField(ctx, &v1alpha5.Machine{}, "status.providerID", func(obj client.Object) []string {
-			return []string{obj.(*v1alpha5.Machine).Status.ProviderID}
-		})
-	}))
+	env = test.NewEnvironment(scheme.Scheme, test.WithCRDs(apis.CRDs...), test.WithFieldIndexers(test.MachineFieldIndexer(ctx), test.NodeClaimFieldIndexer(ctx)))
 
 	cloudProvider = fake.NewCloudProvider()
 	evictionQueue = terminator.NewEvictionQueue(ctx, env.KubernetesInterface.CoreV1(), events.NewRecorder(&record.FakeRecorder{}))
@@ -82,11 +78,13 @@ var _ = AfterSuite(func() {
 
 var _ = Describe("Termination", func() {
 	var node *v1.Node
+	var nodeClaim *v1beta1.NodeClaim
 	var machine *v1alpha5.Machine
 
 	BeforeEach(func() {
-		machine, node = test.MachineAndNode(v1alpha5.Machine{ObjectMeta: metav1.ObjectMeta{Finalizers: []string{v1alpha5.TerminationFinalizer}}})
-		cloudProvider.CreatedMachines[node.Spec.ProviderID] = machine
+		nodeClaim, node = test.NodeClaimAndNode(v1beta1.NodeClaim{ObjectMeta: metav1.ObjectMeta{Finalizers: []string{v1beta1.TerminationFinalizer}}})
+		machine = test.Machine(v1alpha5.Machine{ObjectMeta: metav1.ObjectMeta{Finalizers: []string{v1beta1.TerminationFinalizer}}, Status: v1alpha5.MachineStatus{ProviderID: node.Spec.ProviderID}})
+		cloudProvider.CreatedNodeClaims[node.Spec.ProviderID] = nodeclaimutil.New(machine)
 	})
 
 	AfterEach(func() {
@@ -115,6 +113,15 @@ var _ = Describe("Termination", func() {
 			ExpectExists(ctx, env.Client, machine)
 			ExpectFinalizersRemoved(ctx, env.Client, machine)
 			ExpectNotFound(ctx, env.Client, node, machine)
+		})
+		It("should delete nodeclaims associated with nodes", func() {
+			ExpectApplied(ctx, env.Client, node, nodeClaim)
+			Expect(env.Client.Delete(ctx, node)).To(Succeed())
+			node = ExpectNodeExists(ctx, env.Client, node.Name)
+			ExpectReconcileSucceeded(ctx, terminationController, client.ObjectKeyFromObject(node))
+			ExpectExists(ctx, env.Client, nodeClaim)
+			ExpectFinalizersRemoved(ctx, env.Client, nodeClaim)
+			ExpectNotFound(ctx, env.Client, node, nodeClaim)
 		})
 		It("should not race if deleting nodes in parallel", func() {
 			var nodes []*v1.Node
@@ -385,7 +392,7 @@ var _ = Describe("Termination", func() {
 			ExpectReconcileSucceeded(ctx, terminationController, client.ObjectKeyFromObject(node))
 			ExpectNotFound(ctx, env.Client, node)
 		})
-		It("should delete nodes with no underlying machine even if not fully drained", func() {
+		It("should delete nodes with no underlying instance even if not fully drained", func() {
 			pods := []*v1.Pod{
 				test.Pod(test.PodOptions{NodeName: node.Name, ObjectMeta: metav1.ObjectMeta{OwnerReferences: defaultOwnerRefs}}),
 				test.Pod(test.PodOptions{NodeName: node.Name, ObjectMeta: metav1.ObjectMeta{OwnerReferences: defaultOwnerRefs}}),
@@ -409,7 +416,7 @@ var _ = Describe("Termination", func() {
 			ExpectDeleted(ctx, env.Client, pods[1])
 
 			// Remove the node from created machines so that the cloud provider returns DNE
-			cloudProvider.CreatedMachines = map[string]*v1alpha5.Machine{}
+			cloudProvider.CreatedNodeClaims = map[string]*v1beta1.NodeClaim{}
 
 			// Reconcile to delete node
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
@@ -476,9 +483,10 @@ func ExpectEvicted(c client.Client, pods ...*v1.Pod) {
 }
 
 func ExpectNodeDraining(c client.Client, nodeName string) *v1.Node {
-	node := ExpectNodeExistsWithOffset(1, ctx, c, nodeName)
-	ExpectWithOffset(1, node.Spec.Unschedulable).To(BeTrue())
-	ExpectWithOffset(1, lo.Contains(node.Finalizers, v1alpha5.TerminationFinalizer)).To(BeTrue())
-	ExpectWithOffset(1, node.DeletionTimestamp.IsZero()).To(BeFalse())
+	GinkgoHelper()
+	node := ExpectNodeExists(ctx, c, nodeName)
+	Expect(node.Spec.Unschedulable).To(BeTrue())
+	Expect(lo.Contains(node.Finalizers, v1alpha5.TerminationFinalizer)).To(BeTrue())
+	Expect(node.DeletionTimestamp.IsZero()).To(BeFalse())
 	return node
 }

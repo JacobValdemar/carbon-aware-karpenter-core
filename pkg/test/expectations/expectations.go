@@ -49,11 +49,12 @@ import (
 	"github.com/aws/karpenter-core/pkg/apis/v1alpha5"
 	"github.com/aws/karpenter-core/pkg/apis/v1beta1"
 	"github.com/aws/karpenter-core/pkg/cloudprovider"
-	"github.com/aws/karpenter-core/pkg/controllers/machine/lifecycle"
+	"github.com/aws/karpenter-core/pkg/controllers/nodeclaim/lifecycle"
 	"github.com/aws/karpenter-core/pkg/controllers/provisioning"
 	"github.com/aws/karpenter-core/pkg/controllers/provisioning/scheduling"
 	"github.com/aws/karpenter-core/pkg/controllers/state"
 	"github.com/aws/karpenter-core/pkg/metrics"
+	"github.com/aws/karpenter-core/pkg/operator/controller"
 	"github.com/aws/karpenter-core/pkg/operator/scheme"
 	pscheduling "github.com/aws/karpenter-core/pkg/scheduling"
 	"github.com/aws/karpenter-core/pkg/test"
@@ -69,8 +70,9 @@ const (
 type Bindings map[*v1.Pod]*Binding
 
 type Binding struct {
-	Machine *v1alpha5.Machine
-	Node    *v1.Node
+	Machine   *v1alpha5.Machine
+	NodeClaim *v1beta1.NodeClaim
+	Node      *v1.Node
 }
 
 func (b Bindings) Get(p *v1.Pod) *Binding {
@@ -83,29 +85,20 @@ func (b Bindings) Get(p *v1.Pod) *Binding {
 }
 
 func ExpectExists[T client.Object](ctx context.Context, c client.Client, obj T) T {
-	return ExpectExistsWithOffset(1, ctx, c, obj)
-}
-
-func ExpectExistsWithOffset[T client.Object](offset int, ctx context.Context, c client.Client, obj T) T {
+	GinkgoHelper()
 	resp := reflect.New(reflect.TypeOf(*new(T)).Elem()).Interface().(T)
-	ExpectWithOffset(offset+1, c.Get(ctx, client.ObjectKeyFromObject(obj), resp)).To(Succeed())
+	Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), resp)).To(Succeed())
 	return resp
 }
 
 func ExpectPodExists(ctx context.Context, c client.Client, name string, namespace string) *v1.Pod {
-	return ExpectPodExistsWithOffset(1, ctx, c, name, namespace)
-}
-
-func ExpectPodExistsWithOffset(offset int, ctx context.Context, c client.Client, name string, namespace string) *v1.Pod {
-	return ExpectExistsWithOffset(offset+1, ctx, c, &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace}})
+	GinkgoHelper()
+	return ExpectExists(ctx, c, &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace}})
 }
 
 func ExpectNodeExists(ctx context.Context, c client.Client, name string) *v1.Node {
-	return ExpectNodeExistsWithOffset(1, ctx, c, name)
-}
-
-func ExpectNodeExistsWithOffset(offset int, ctx context.Context, c client.Client, name string) *v1.Node {
-	return ExpectExistsWithOffset(offset+1, ctx, c, &v1.Node{ObjectMeta: metav1.ObjectMeta{Name: name}})
+	GinkgoHelper()
+	return ExpectExists(ctx, c, &v1.Node{ObjectMeta: metav1.ObjectMeta{Name: name}})
 }
 
 func ExpectNotFound(ctx context.Context, c client.Client, objects ...client.Object) {
@@ -123,22 +116,21 @@ func ExpectNotFoundWithOffset(offset int, ctx context.Context, c client.Client, 
 }
 
 func ExpectScheduled(ctx context.Context, c client.Client, pod *v1.Pod) *v1.Node {
-	p := ExpectPodExistsWithOffset(1, ctx, c, pod.Name, pod.Namespace)
-	ExpectWithOffset(1, p.Spec.NodeName).ToNot(BeEmpty(), fmt.Sprintf("expected %s/%s to be scheduled", pod.Namespace, pod.Name))
-	return ExpectNodeExistsWithOffset(1, ctx, c, p.Spec.NodeName)
+	GinkgoHelper()
+	p := ExpectPodExists(ctx, c, pod.Name, pod.Namespace)
+	Expect(p.Spec.NodeName).ToNot(BeEmpty(), fmt.Sprintf("expected %s/%s to be scheduled", pod.Namespace, pod.Name))
+	return ExpectNodeExists(ctx, c, p.Spec.NodeName)
 }
 
 func ExpectNotScheduled(ctx context.Context, c client.Client, pod *v1.Pod) *v1.Pod {
-	p := ExpectPodExistsWithOffset(1, ctx, c, pod.Name, pod.Namespace)
+	GinkgoHelper()
+	p := ExpectPodExists(ctx, c, pod.Name, pod.Namespace)
 	EventuallyWithOffset(1, p.Spec.NodeName).Should(BeEmpty(), fmt.Sprintf("expected %s/%s to not be scheduled", pod.Namespace, pod.Name))
 	return p
 }
 
 func ExpectApplied(ctx context.Context, c client.Client, objects ...client.Object) {
-	ExpectAppliedWithOffset(1, ctx, c, objects...)
-}
-
-func ExpectAppliedWithOffset(offset int, ctx context.Context, c client.Client, objects ...client.Object) {
+	GinkgoHelper()
 	for _, object := range objects {
 		deletionTimestampSet := !object.GetDeletionTimestamp().IsZero()
 		current := object.DeepCopyObject().(client.Object)
@@ -147,17 +139,17 @@ func ExpectAppliedWithOffset(offset int, ctx context.Context, c client.Client, o
 		// Create or Update
 		if err := c.Get(ctx, client.ObjectKeyFromObject(current), current); err != nil {
 			if errors.IsNotFound(err) {
-				ExpectWithOffset(offset+1, c.Create(ctx, object)).To(Succeed())
+				Expect(c.Create(ctx, object)).To(Succeed())
 			} else {
-				ExpectWithOffset(offset+1, err).ToNot(HaveOccurred())
+				Expect(err).ToNot(HaveOccurred())
 			}
 		} else {
 			object.SetResourceVersion(current.GetResourceVersion())
-			ExpectWithOffset(offset+1, c.Update(ctx, object)).To(Succeed())
+			Expect(c.Update(ctx, object)).To(Succeed())
 		}
 		// Update status
 		statuscopy.SetResourceVersion(object.GetResourceVersion())
-		ExpectWithOffset(offset+1, c.Status().Update(ctx, statuscopy)).To(Or(Succeed(), MatchError("the server could not find the requested resource"))) // Some objects do not have a status
+		Expect(c.Status().Update(ctx, statuscopy)).To(Or(Succeed(), MatchError("the server could not find the requested resource"))) // Some objects do not have a status
 
 		// Re-get the object to grab the updated spec and status
 		Expect(c.Get(ctx, client.ObjectKeyFromObject(object), object)).To(Succeed())
@@ -187,7 +179,7 @@ func ExpectDeletionTimestampSet(ctx context.Context, c client.Client, objects ..
 func ExpectDeletionTimestampSetWithOffset(offset int, ctx context.Context, c client.Client, objects ...client.Object) {
 	for _, object := range objects {
 		ExpectWithOffset(offset+1, c.Get(ctx, client.ObjectKeyFromObject(object), object)).To(Succeed())
-		controllerutil.AddFinalizer(object, v1alpha5.TestingGroup+"/finalizer")
+		controllerutil.AddFinalizer(object, "testing/finalizer")
 		ExpectWithOffset(offset+1, c.Update(ctx, object)).To(Succeed())
 		ExpectWithOffset(offset+1, c.Delete(ctx, object)).To(Succeed())
 		DeferCleanup(func(obj client.Object) {
@@ -202,7 +194,7 @@ func ExpectCleanedUp(ctx context.Context, c client.Client) {
 	wg := sync.WaitGroup{}
 	namespaces := &v1.NamespaceList{}
 	ExpectWithOffset(1, c.List(ctx, namespaces)).To(Succeed())
-	ExpectFinalizersRemovedFromList(ctx, c, &v1.NodeList{}, &v1alpha5.MachineList{}, &v1.PersistentVolumeClaimList{})
+	ExpectFinalizersRemovedFromList(ctx, c, &v1.NodeList{}, &v1alpha5.MachineList{}, &v1beta1.NodeClaimList{}, &v1.PersistentVolumeClaimList{})
 	for _, object := range []client.Object{
 		&v1.Pod{},
 		&v1.Node{},
@@ -244,16 +236,18 @@ func ExpectFinalizersRemovedFromList(ctx context.Context, c client.Client, objec
 }
 
 func ExpectFinalizersRemoved(ctx context.Context, c client.Client, objs ...client.Object) {
+	GinkgoHelper()
 	for _, obj := range objs {
-		ExpectWithOffset(1, client.IgnoreNotFound(c.Get(ctx, client.ObjectKeyFromObject(obj), obj))).To(Succeed())
+		Expect(client.IgnoreNotFound(c.Get(ctx, client.ObjectKeyFromObject(obj), obj))).To(Succeed())
 		stored := obj.DeepCopyObject().(client.Object)
 		obj.SetFinalizers([]string{})
-		ExpectWithOffset(1, client.IgnoreNotFound(c.Patch(ctx, obj, client.MergeFrom(stored)))).To(Succeed())
+		Expect(client.IgnoreNotFound(c.Patch(ctx, obj, client.MergeFrom(stored)))).To(Succeed())
 	}
 }
 
 func ExpectProvisioned(ctx context.Context, c client.Client, cluster *state.Cluster, cloudProvider cloudprovider.CloudProvider, provisioner *provisioning.Provisioner, pods ...*v1.Pod) Bindings {
-	bindings := ExpectProvisionedNoBindingWithOffset(1, ctx, c, cluster, cloudProvider, provisioner, pods...)
+	GinkgoHelper()
+	bindings := ExpectProvisionedNoBinding(ctx, c, cluster, cloudProvider, provisioner, pods...)
 	podKeys := sets.NewString(lo.Map(pods, func(p *v1.Pod, _ int) string { return client.ObjectKeyFromObject(p).String() })...)
 	for pod, binding := range bindings {
 		// Only bind the pods that are passed through
@@ -265,14 +259,12 @@ func ExpectProvisioned(ctx context.Context, c client.Client, cluster *state.Clus
 	return bindings
 }
 
+//nolint:gocyclo
 func ExpectProvisionedNoBinding(ctx context.Context, c client.Client, cluster *state.Cluster, cloudProvider cloudprovider.CloudProvider, provisioner *provisioning.Provisioner, pods ...*v1.Pod) Bindings {
-	return ExpectProvisionedNoBindingWithOffset(1, ctx, c, cluster, cloudProvider, provisioner, pods...)
-}
-
-func ExpectProvisionedNoBindingWithOffset(offset int, ctx context.Context, c client.Client, cluster *state.Cluster, cloudProvider cloudprovider.CloudProvider, provisioner *provisioning.Provisioner, pods ...*v1.Pod) Bindings {
+	GinkgoHelper()
 	// Persist objects
 	for _, pod := range pods {
-		ExpectAppliedWithOffset(offset+1, ctx, c, pod)
+		ExpectApplied(ctx, c, pod)
 	}
 	// TODO: Check the error on the provisioner scheduling round
 	results, err := provisioner.Schedule(ctx)
@@ -287,14 +279,28 @@ func ExpectProvisionedNoBindingWithOffset(offset int, ctx context.Context, c cli
 		if err != nil {
 			return bindings
 		}
-		machine := &v1alpha5.Machine{}
-		ExpectWithOffset(offset+1, c.Get(ctx, types.NamespacedName{Name: key.Name}, machine)).To(Succeed())
-		machine, node := ExpectMachineDeployedWithOffset(offset+1, ctx, c, cluster, cloudProvider, machine)
-		if machine != nil && node != nil {
-			for _, pod := range m.Pods {
-				bindings[pod] = &Binding{
-					Machine: machine,
-					Node:    node,
+		if key.IsMachine {
+			machine := &v1alpha5.Machine{}
+			Expect(c.Get(ctx, types.NamespacedName{Name: key.Name}, machine)).To(Succeed())
+			machine, node := ExpectMachineDeployed(ctx, c, cluster, cloudProvider, machine)
+			if machine != nil && node != nil {
+				for _, pod := range m.Pods {
+					bindings[pod] = &Binding{
+						Machine: machine,
+						Node:    node,
+					}
+				}
+			}
+		} else {
+			nodeClaim := &v1beta1.NodeClaim{}
+			Expect(c.Get(ctx, types.NamespacedName{Name: key.Name}, nodeClaim)).To(Succeed())
+			nodeClaim, node := ExpectNodeClaimDeployed(ctx, c, cluster, cloudProvider, nodeClaim)
+			if nodeClaim != nil && node != nil {
+				for _, pod := range m.Pods {
+					bindings[pod] = &Binding{
+						NodeClaim: nodeClaim,
+						Node:      node,
+					}
 				}
 			}
 		}
@@ -313,31 +319,25 @@ func ExpectProvisionedNoBindingWithOffset(offset int, ctx context.Context, c cli
 }
 
 func ExpectMachineDeployedNoNode(ctx context.Context, c client.Client, cluster *state.Cluster, cloudProvider cloudprovider.CloudProvider, m *v1alpha5.Machine) (*v1alpha5.Machine, error) {
-	return ExpectMachineDeployedNoNodeWithOffset(1, ctx, c, cluster, cloudProvider, m)
-}
-
-func ExpectMachineDeployedNoNodeWithOffset(offset int, ctx context.Context, c client.Client, cluster *state.Cluster, cloudProvider cloudprovider.CloudProvider, m *v1alpha5.Machine) (*v1alpha5.Machine, error) {
-	resolved, err := cloudProvider.Create(ctx, m)
+	GinkgoHelper()
+	resolved, err := cloudProvider.Create(ctx, nodeclaimutil.New(m))
 	// TODO @joinnis: Check this error rather than swallowing it. This is swallowed right now due to how we are doing some testing in the cloudprovider
 	if err != nil {
 		return m, err
 	}
-	ExpectWithOffset(offset+1, err).To(Succeed())
+	Expect(err).To(Succeed())
 
 	// Make the machine ready in the status conditions
-	m = machineutil.NewFromNodeClaim(lifecycle.PopulateNodeClaimDetails(nodeclaimutil.New(m), nodeclaimutil.New(resolved)))
+	m = machineutil.NewFromNodeClaim(lifecycle.PopulateNodeClaimDetails(nodeclaimutil.New(m), resolved))
 	m.StatusConditions().MarkTrue(v1alpha5.MachineLaunched)
-	ExpectAppliedWithOffset(offset+1, ctx, c, m)
+	ExpectApplied(ctx, c, m)
 	cluster.UpdateNodeClaim(nodeclaimutil.New(m))
 	return m, nil
 }
 
-func ExpectMachineDeployed(ctx context.Context, c client.Client, cluster *state.Cluster, cloudProvider cloudprovider.CloudProvider, machine *v1alpha5.Machine) (*v1alpha5.Machine, *v1.Node) {
-	return ExpectMachineDeployedWithOffset(1, ctx, c, cluster, cloudProvider, machine)
-}
-
-func ExpectMachineDeployedWithOffset(offset int, ctx context.Context, c client.Client, cluster *state.Cluster, cloudProvider cloudprovider.CloudProvider, m *v1alpha5.Machine) (*v1alpha5.Machine, *v1.Node) {
-	m, err := ExpectMachineDeployedNoNodeWithOffset(offset+1, ctx, c, cluster, cloudProvider, m)
+func ExpectMachineDeployed(ctx context.Context, c client.Client, cluster *state.Cluster, cloudProvider cloudprovider.CloudProvider, m *v1alpha5.Machine) (*v1alpha5.Machine, *v1.Node) {
+	GinkgoHelper()
+	m, err := ExpectMachineDeployedNoNode(ctx, c, cluster, cloudProvider, m)
 	if err != nil {
 		return m, nil
 	}
@@ -346,10 +346,44 @@ func ExpectMachineDeployedWithOffset(offset int, ctx context.Context, c client.C
 	// Mock the machine launch and node joining at the apiserver
 	node := test.MachineLinkedNode(m)
 	node.Labels = lo.Assign(node.Labels, map[string]string{v1alpha5.LabelNodeRegistered: "true"})
-	ExpectAppliedWithOffset(offset+1, ctx, c, m, node)
-	ExpectWithOffset(offset+1, cluster.UpdateNode(ctx, node)).To(Succeed())
+	ExpectApplied(ctx, c, m, node)
+	Expect(cluster.UpdateNode(ctx, node)).To(Succeed())
 	cluster.UpdateNodeClaim(nodeclaimutil.New(m))
 	return m, node
+}
+
+func ExpectNodeClaimDeployedNoNode(ctx context.Context, c client.Client, cluster *state.Cluster, cloudProvider cloudprovider.CloudProvider, nc *v1beta1.NodeClaim) (*v1beta1.NodeClaim, error) {
+	GinkgoHelper()
+	resolved, err := cloudProvider.Create(ctx, nc)
+	// TODO @joinnis: Check this error rather than swallowing it. This is swallowed right now due to how we are doing some testing in the cloudprovider
+	if err != nil {
+		return nc, err
+	}
+	Expect(err).To(Succeed())
+
+	// Make the machine ready in the status conditions
+	nc = lifecycle.PopulateNodeClaimDetails(nc, resolved)
+	nc.StatusConditions().MarkTrue(v1beta1.Launched)
+	ExpectApplied(ctx, c, nc)
+	cluster.UpdateNodeClaim(nc)
+	return nc, nil
+}
+
+func ExpectNodeClaimDeployed(ctx context.Context, c client.Client, cluster *state.Cluster, cloudProvider cloudprovider.CloudProvider, nc *v1beta1.NodeClaim) (*v1beta1.NodeClaim, *v1.Node) {
+	GinkgoHelper()
+	nc, err := ExpectNodeClaimDeployedNoNode(ctx, c, cluster, cloudProvider, nc)
+	if err != nil {
+		return nc, nil
+	}
+	nc.StatusConditions().MarkTrue(v1beta1.Registered)
+
+	// Mock the machine launch and node joining at the apiserver
+	node := test.NodeClaimLinkedNode(nc)
+	node.Labels = lo.Assign(node.Labels, map[string]string{v1beta1.NodeRegisteredLabelKey: "true"})
+	ExpectApplied(ctx, c, nc, node)
+	Expect(cluster.UpdateNode(ctx, node)).To(Succeed())
+	cluster.UpdateNodeClaim(nc)
+	return nc, node
 }
 
 func ExpectMachinesCascadeDeletion(ctx context.Context, c client.Client, machines ...*v1alpha5.Machine) {
@@ -369,41 +403,42 @@ func ExpectMachinesCascadeDeletion(ctx context.Context, c client.Client, machine
 	}
 }
 
-func ExpectMakeMachinesInitialized(ctx context.Context, c client.Client, machines ...*v1alpha5.Machine) {
-	ExpectMakeMachinesInitializedWithOffset(1, ctx, c, machines...)
+func ExpectMakeNodeClaimsInitialized(ctx context.Context, c client.Client, nodeClaims ...*v1beta1.NodeClaim) {
+	GinkgoHelper()
+	for i := range nodeClaims {
+		nodeClaims[i] = ExpectExists(ctx, c, nodeClaims[i])
+		nodeClaims[i].StatusConditions().MarkTrue(v1beta1.Launched)
+		nodeClaims[i].StatusConditions().MarkTrue(v1beta1.Registered)
+		nodeClaims[i].StatusConditions().MarkTrue(v1beta1.Initialized)
+		ExpectApplied(ctx, c, nodeClaims[i])
+	}
 }
 
-func ExpectMakeMachinesInitializedWithOffset(offset int, ctx context.Context, c client.Client, machines ...*v1alpha5.Machine) {
+func ExpectMakeMachinesInitialized(ctx context.Context, c client.Client, machines ...*v1alpha5.Machine) {
+	GinkgoHelper()
 	for i := range machines {
-		machines[i] = ExpectExistsWithOffset(offset+1, ctx, c, machines[i])
+		machines[i] = ExpectExists(ctx, c, machines[i])
 		machines[i].StatusConditions().MarkTrue(v1alpha5.MachineLaunched)
 		machines[i].StatusConditions().MarkTrue(v1alpha5.MachineRegistered)
 		machines[i].StatusConditions().MarkTrue(v1alpha5.MachineInitialized)
-		ExpectAppliedWithOffset(offset+1, ctx, c, machines[i])
+		ExpectApplied(ctx, c, machines[i])
 	}
 }
 
 func ExpectMakeNodesInitialized(ctx context.Context, c client.Client, nodes ...*v1.Node) {
-	ExpectMakeNodesInitializedWithOffset(1, ctx, c, nodes...)
-}
-
-func ExpectMakeNodesInitializedWithOffset(offset int, ctx context.Context, c client.Client, nodes ...*v1.Node) {
-	ExpectMakeNodesReadyWithOffset(offset+1, ctx, c, nodes...)
+	GinkgoHelper()
+	ExpectMakeNodesReady(ctx, c, nodes...)
 
 	for i := range nodes {
 		nodes[i].Labels[v1alpha5.LabelNodeRegistered] = "true"
 		nodes[i].Labels[v1alpha5.LabelNodeInitialized] = "true"
-		ExpectAppliedWithOffset(offset+1, ctx, c, nodes[i])
+		ExpectApplied(ctx, c, nodes[i])
 	}
 }
 
 func ExpectMakeNodesReady(ctx context.Context, c client.Client, nodes ...*v1.Node) {
-	ExpectMakeNodesReadyWithOffset(1, ctx, c, nodes...)
-}
-
-func ExpectMakeNodesReadyWithOffset(offset int, ctx context.Context, c client.Client, nodes ...*v1.Node) {
 	for i := range nodes {
-		nodes[i] = ExpectExistsWithOffset(offset+1, ctx, c, nodes[i])
+		nodes[i] = ExpectExists(ctx, c, nodes[i])
 		nodes[i].Status.Phase = v1.NodeRunning
 		nodes[i].Status.Conditions = []v1.NodeCondition{
 			{
@@ -424,7 +459,7 @@ func ExpectMakeNodesReadyWithOffset(offset int, ctx context.Context, c client.Cl
 			})
 			return found
 		})
-		ExpectAppliedWithOffset(offset+1, ctx, c, nodes[i])
+		ExpectApplied(ctx, c, nodes[i])
 	}
 }
 
@@ -564,4 +599,34 @@ func ExpectMachinesWithOffset(offset int, ctx context.Context, c client.Client) 
 	return lo.Map(machineList.Items, func(m v1alpha5.Machine, _ int) *v1alpha5.Machine {
 		return &m
 	})
+}
+
+func ExpectMakeNodesAndMachinesInitializedAndStateUpdated(ctx context.Context, c client.Client, nodeStateController, machineStateController controller.Controller, nodes []*v1.Node, machines []*v1alpha5.Machine) {
+	GinkgoHelper()
+
+	ExpectMakeNodesInitialized(ctx, c, nodes...)
+	ExpectMakeMachinesInitialized(ctx, c, machines...)
+
+	// Inform cluster state about node and machine readiness
+	for _, n := range nodes {
+		ExpectReconcileSucceeded(ctx, nodeStateController, client.ObjectKeyFromObject(n))
+	}
+	for _, m := range machines {
+		ExpectReconcileSucceeded(ctx, machineStateController, client.ObjectKeyFromObject(m))
+	}
+}
+
+func ExpectMakeNodesAndNodeClaimsInitializedAndStateUpdated(ctx context.Context, c client.Client, nodeStateController, nodeClaimStateController controller.Controller, nodes []*v1.Node, nodeClaims []*v1beta1.NodeClaim) {
+	GinkgoHelper()
+
+	ExpectMakeNodesInitialized(ctx, c, nodes...)
+	ExpectMakeNodeClaimsInitialized(ctx, c, nodeClaims...)
+
+	// Inform cluster state about node and machine readiness
+	for _, n := range nodes {
+		ExpectReconcileSucceeded(ctx, nodeStateController, client.ObjectKeyFromObject(n))
+	}
+	for _, m := range nodeClaims {
+		ExpectReconcileSucceeded(ctx, nodeClaimStateController, client.ObjectKeyFromObject(m))
+	}
 }

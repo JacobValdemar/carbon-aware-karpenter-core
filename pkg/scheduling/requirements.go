@@ -26,6 +26,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 
 	"github.com/aws/karpenter-core/pkg/apis/v1alpha5"
+	"github.com/aws/karpenter-core/pkg/apis/v1beta1"
+	"github.com/aws/karpenter-core/pkg/utils/functional"
 )
 
 // Requirements are an efficient set representation under the hood. Since its underlying
@@ -147,27 +149,32 @@ func (r Requirements) Get(key string) *Requirement {
 	return r[key]
 }
 
-// Compatible ensures the provided requirements can loosely be met.
-func (r Requirements) Compatible(requirements Requirements) (errs error) {
-	// Custom Labels must intersect, but if not defined are denied.
-	for key := range requirements.Keys().Difference(v1alpha5.WellKnownLabels) {
-		if operator := requirements.Get(key).Operator(); r.Has(key) || operator == v1.NodeSelectorOpNotIn || operator == v1.NodeSelectorOpDoesNotExist {
-			continue
-		}
-		errs = multierr.Append(errs, fmt.Errorf("label %q does not have known values%s", key, labelHint(r, key)))
-	}
-	// Well Known Labels must intersect, but if not defined, are allowed.
-	return multierr.Append(errs, r.Intersects(requirements))
+type CompatabilityOptions struct {
+	AllowUndefined sets.Set[string]
 }
 
-// StrictlyCompatible ensures all the provided requirements can strictly be met.
-func (r Requirements) StrictlyCompatible(requirements Requirements) (errs error) {
-	// All requirements in the passed through requirements should be defined in "r"
-	for key := range requirements.Keys() {
+// TODO @joinnis: Remove AllowUndefinedWellKnownLabelsV1Alpha5 and change AllowUndefinedWellKnownLabelsV1Beta1
+// when dropping v1alpha5 support from karpenter-core
+
+var AllowUndefinedWellKnownLabelsV1Alpha5 = func(options CompatabilityOptions) CompatabilityOptions {
+	options.AllowUndefined = v1alpha5.WellKnownLabels
+	return options
+}
+
+var AllowUndefinedWellKnownLabelsV1Beta1 = func(options CompatabilityOptions) CompatabilityOptions {
+	options.AllowUndefined = v1beta1.WellKnownLabels
+	return options
+}
+
+// Compatible ensures the provided requirements can loosely be met.
+func (r Requirements) Compatible(requirements Requirements, options ...functional.Option[CompatabilityOptions]) (errs error) {
+	opts := functional.ResolveOptions(options...)
+	// Custom Labels must intersect, but if not defined are denied.
+	for key := range requirements.Keys().Difference(opts.AllowUndefined) {
 		if operator := requirements.Get(key).Operator(); r.Has(key) || operator == v1.NodeSelectorOpNotIn || operator == v1.NodeSelectorOpDoesNotExist {
 			continue
 		}
-		errs = multierr.Append(errs, fmt.Errorf("label %q does not have known values%s", key, labelHint(r, key)))
+		errs = multierr.Append(errs, fmt.Errorf("label %q does not have known values%s", key, labelHint(r, key, opts.AllowUndefined)))
 	}
 	// Well Known Labels must intersect, but if not defined, are allowed.
 	return multierr.Append(errs, r.Intersects(requirements))
@@ -212,8 +219,8 @@ func editDistance(s, t string) int {
 	return prevRow[n-1]
 }
 
-func labelHint(r Requirements, key string) string {
-	for wellKnown := range v1alpha5.WellKnownLabels {
+func labelHint(r Requirements, key string, allowedUndefined sets.Set[string]) string {
+	for wellKnown := range allowedUndefined {
 		if strings.Contains(wellKnown, key) || editDistance(key, wellKnown) < len(wellKnown)/5 {
 			return fmt.Sprintf(" (typo of %q?)", wellKnown)
 		}
@@ -249,7 +256,7 @@ func (r Requirements) Intersects(requirements Requirements) (errs error) {
 func (r Requirements) Labels() map[string]string {
 	labels := map[string]string{}
 	for key, requirement := range r {
-		if !v1alpha5.IsRestrictedNodeLabel(key) {
+		if !v1alpha5.IsRestrictedNodeLabel(key) && !v1beta1.IsRestrictedNodeLabel(key) {
 			if value := requirement.Any(); value != "" {
 				labels[key] = value
 			}
@@ -259,7 +266,9 @@ func (r Requirements) Labels() map[string]string {
 }
 
 func (r Requirements) String() string {
-	requirements := lo.Reject(r.Values(), func(requirement *Requirement, _ int) bool { return v1alpha5.RestrictedLabels.Has(requirement.Key) })
+	requirements := lo.Reject(r.Values(), func(requirement *Requirement, _ int) bool {
+		return v1alpha5.RestrictedLabels.Has(requirement.Key) || v1beta1.RestrictedLabels.Has(requirement.Key)
+	})
 	stringRequirements := lo.Map(requirements, func(requirement *Requirement, _ int) string { return requirement.String() })
 	slices.Sort(stringRequirements)
 	return strings.Join(stringRequirements, ", ")
