@@ -111,7 +111,7 @@ func (m *MultiMachineConsolidation) firstNMachineConsolidationOption(ctx context
 		mid := (min + max) / 2
 		candidatesToConsolidate := candidates[0 : mid+1]
 
-		cmd, err := m.computeConsolidation(ctx, candidatesToConsolidate...)
+		cmd, err := m.computeConsolidation(ctx, candidatesToConsolidate...) //JANOTE: introduces pricing
 		if err != nil {
 			return Command{}, err
 		}
@@ -120,7 +120,7 @@ func (m *MultiMachineConsolidation) firstNMachineConsolidationOption(ctx context
 		// required
 		replacementHasValidInstanceTypes := false
 		if cmd.Action() == ReplaceAction {
-			cmd.replacements[0].InstanceTypeOptions = filterOutSameType(cmd.replacements[0], candidatesToConsolidate)
+			cmd.replacements[0].InstanceTypeOptions = filterOutSameType(cmd.replacements[0], candidatesToConsolidate) //JANOTE: introduces pricing
 			replacementHasValidInstanceTypes = len(cmd.replacements[0].InstanceTypeOptions) > 0
 		}
 
@@ -184,5 +184,5 @@ func filterOutSameType(newMachine *scheduling.NodeClaim, consolidate []*Candidat
 		}
 	}
 
-	return filterByPrice(newMachine.InstanceTypeOptions, newMachine.Requirements, maxPrice)
+	return filterByPrice(newMachine.InstanceTypeOptions, newMachine.Requirements, maxPrice) //JANOTE: introduces pricing
 }

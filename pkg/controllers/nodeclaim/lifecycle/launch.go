@@ -102,7 +102,8 @@ func (l *Launch) linkNodeClaim(ctx context.Context, nodeClaim *v1beta1.NodeClaim
 }
 
 func (l *Launch) launchNodeClaim(ctx context.Context, nodeClaim *v1beta1.NodeClaim) (*v1beta1.NodeClaim, error) {
-	created, err := l.cloudProvider.Create(ctx, nodeClaim)
+	created, err := l.cloudProvider.Create(ctx, nodeClaim) // JANOTE: calls cloud provider create
+	logging.FromContext(ctx).Infof("launchNodeClaim from launch.go")
 	if err != nil {
 		switch {
 		case cloudprovider.IsInsufficientCapacityError(err):

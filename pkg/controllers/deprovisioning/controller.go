@@ -78,8 +78,28 @@ func waitRetryOptions(ctx context.Context) []retry.Option {
 func NewController(clk clock.Clock, kubeClient client.Client, provisioner *provisioning.Provisioner,
 	cp cloudprovider.CloudProvider, recorder events.Recorder, cluster *state.Cluster) *Controller {
 
+	// if settings.FromContext(ctx).EnvironmentalSustainabilityEnabled {
+	// 	return &Controller{
+	// 		clock:         clk,
+	// 		kubeClient:    kubeClient,
+	// 		cluster:       cluster,
+	// 		provisioner:   provisioner,
+	// 		recorder:      recorder,
+	// 		cloudProvider: cp,
+	// 		lastRun:       map[string]time.Time{},
+	// 		deprovisioners: []Deprovisioner{
+	// 			NewExpiration(clk, kubeClient, cluster, provisioner, recorder),
+	// 			NewDrift(kubeClient, cluster, provisioner, recorder),
+	// 			NewEmptiness(clk),
+	// 			NewEmptyMachineConsolidation(clk, cluster, kubeClient, provisioner, cp, recorder),
+	// 			NewCarbonAwareMultiMachineConsolidation(clk, cluster, kubeClient, provisioner, cp, recorder),
+	// 			NewCarbonAwareSingleMachineConsolidation(clk, cluster, kubeClient, provisioner, cp, recorder),
+	// 		},
+	// 	}
+	// }
+
 	// JANOTE: Here, return other controller if carbon-awareness feature gate is enabled.
-	// Create three new deprovisioners NewEmptyMachineConsolidation, NewMultiMachineConsolidation, and NewSingleMachineConsolidation that is carbon aware and use them
+	// Create three new deprovisioners NewMultiMachineConsolidation, and NewSingleMachineConsolidation that is carbon aware and use them
 
 	return &Controller{
 		clock:         clk,

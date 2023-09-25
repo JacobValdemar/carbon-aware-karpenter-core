@@ -65,7 +65,7 @@ func (s *SingleMachineConsolidation) ComputeCommand(ctx context.Context, candida
 			return Command{}, nil
 		}
 		// compute a possible consolidation option
-		cmd, err := s.computeConsolidation(ctx, candidate)
+		cmd, err := s.computeConsolidation(ctx, candidate) //JANOTE: introduces pricing
 		if err != nil {
 			logging.FromContext(ctx).Errorf("computing consolidation %s", err)
 			continue

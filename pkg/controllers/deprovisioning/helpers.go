@@ -154,7 +154,7 @@ func GetPodEvictionCost(ctx context.Context, p *v1.Pod) float64 {
 	return clamp(-10.0, cost, 10.0)
 }
 
-// JANOTE
+// JANOTE: introduces pricing
 func filterByPrice(options []*cloudprovider.InstanceType, reqs scheduling.Requirements, price float64) []*cloudprovider.InstanceType {
 	var result []*cloudprovider.InstanceType
 	for _, it := range options {
