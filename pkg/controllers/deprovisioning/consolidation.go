@@ -69,10 +69,10 @@ func (c *consolidation) String() string {
 	return metrics.ConsolidationReason
 }
 
-// sortAndFilterCandidates orders deprovisionable nodes by the disruptionCost, removing any that we already know won't
+// sortAndFilterCandidates orders deprovisionable candidates by the disruptionCost, removing any that we already know won't
 // be viable consolidation options.
-func (c *consolidation) sortAndFilterCandidates(ctx context.Context, nodes []*Candidate) ([]*Candidate, error) {
-	candidates, err := filterCandidates(ctx, c.kubeClient, c.recorder, nodes)
+func (c *consolidation) sortAndFilterCandidates(ctx context.Context, candidates []*Candidate) ([]*Candidate, error) {
+	candidates, err := filterCandidates(ctx, c.kubeClient, c.recorder, candidates)
 	if err != nil {
 		return nil, fmt.Errorf("filtering candidates, %w", err)
 	}
@@ -93,14 +93,15 @@ func (c *consolidation) markConsolidated() {
 	c.lastConsolidationState = c.cluster.ConsolidationState()
 }
 
-// ShouldDeprovision is a predicate used to filter deprovisionable nodes
+// ShouldDeprovision is a predicate used to filter deprovisionable candidates
 func (c *consolidation) ShouldDeprovision(_ context.Context, cn *Candidate) bool {
 	if cn.Annotations()[v1alpha5.DoNotConsolidateNodeAnnotationKey] == "true" {
 		c.recorder.Publish(deprovisioningevents.Unconsolidatable(cn.Node, cn.NodeClaim, fmt.Sprintf("%s annotation exists", v1alpha5.DoNotConsolidateNodeAnnotationKey))...)
 		return false
 	}
-	if cn.nodePool.Spec.Disruption.ConsolidationPolicy != v1beta1.ConsolidationPolicyWhenUnderutilized {
-		c.recorder.Publish(deprovisioningevents.Unconsolidatable(cn.Node, cn.NodeClaim, fmt.Sprintf("%s %q has empty consolidation disabled by consolidation policy", lo.Ternary(cn.nodePool.IsProvisioner, "Provisioner", "NodePool"), cn.nodePool.Name))...)
+	if cn.nodePool.Spec.Disruption.ConsolidationPolicy != v1beta1.ConsolidationPolicyWhenUnderutilized ||
+		(cn.nodePool.Spec.Disruption.ConsolidateAfter != nil && cn.nodePool.Spec.Disruption.ConsolidateAfter.Duration == nil) {
+		c.recorder.Publish(deprovisioningevents.Unconsolidatable(cn.Node, cn.NodeClaim, fmt.Sprintf("%s %q has consolidation disabled", lo.Ternary(cn.nodePool.IsProvisioner, "Provisioner", "NodePool"), cn.nodePool.Name))...)
 		return false
 	}
 	return true
@@ -146,11 +147,12 @@ func (c *consolidation) computeConsolidation(ctx context.Context, candidates ...
 
 	// get the current node price based on the offering
 	// fallback if we can't find the specific zonal pricing data
-	nodesPrice, err := getCandidatePrices(candidates) // JANOTE: create your own function
+
+	candidatePrice, err := getCandidatePrices(candidates) // JANOTE: create your own function
 	if err != nil {
 		return Command{}, fmt.Errorf("getting offering price from candidate node, %w", err)
 	}
-	results.NewNodeClaims[0].InstanceTypeOptions = filterByPrice(results.NewNodeClaims[0].InstanceTypeOptions, results.NewNodeClaims[0].Requirements, nodesPrice) //JANOTE: introduces pricing
+	results.NewNodeClaims[0].InstanceTypeOptions = filterByPrice(results.NewNodeClaims[0].InstanceTypeOptions, results.NewNodeClaims[0].Requirements, candidatePrice)
 	if len(results.NewNodeClaims[0].InstanceTypeOptions) == 0 {
 		if len(candidates) == 1 {
 			c.recorder.Publish(deprovisioningevents.Unconsolidatable(candidates[0].Node, candidates[0].NodeClaim, "Can't replace with a cheaper node")...)
@@ -164,13 +166,13 @@ func (c *consolidation) computeConsolidation(ctx context.Context, candidates ...
 	// a spot node with one that is less available and more likely to be reclaimed).
 	allExistingAreSpot := true
 	for _, cn := range candidates {
-		if cn.capacityType != v1alpha5.CapacityTypeSpot {
+		if cn.capacityType != v1beta1.CapacityTypeSpot {
 			allExistingAreSpot = false
 		}
 	}
 
 	if allExistingAreSpot &&
-		results.NewNodeClaims[0].Requirements.Get(v1alpha5.LabelCapacityType).Has(v1alpha5.CapacityTypeSpot) {
+		results.NewNodeClaims[0].Requirements.Get(v1beta1.CapacityTypeLabelKey).Has(v1beta1.CapacityTypeSpot) {
 		if len(candidates) == 1 {
 			c.recorder.Publish(deprovisioningevents.Unconsolidatable(candidates[0].Node, candidates[0].NodeClaim, "Can't replace a spot node with a spot node")...)
 		}
@@ -193,7 +195,7 @@ func (c *consolidation) computeConsolidation(ctx context.Context, candidates ...
 }
 
 // JANOTE
-// getCandidatePrices returns the sum of the prices of the given candidate nodes
+// getCandidatePrices returns the sum of the prices of the given candidates
 func getCandidatePrices(candidates []*Candidate) (float64, error) {
 	var price float64
 	for _, c := range candidates {
